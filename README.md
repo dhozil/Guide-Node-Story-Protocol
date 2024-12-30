@@ -34,7 +34,7 @@ source $HOME/.bash_profile
 ### Download Story-Geth binary
 ```
 cd $HOME
-wget https://github.com/piplabs/story-geth/releases/download/v0.9.4/geth-linux-amd64
+wget https://github.com/piplabs/story-geth/releases/download/v0.11.0/geth-linux-amd64
 [ ! -d "$HOME/go/bin" ] && mkdir -p $HOME/go/bin
 if ! grep -q "$HOME/go/bin" $HOME/.bash_profile; then
   echo "export PATH=$PATH:/usr/local/go/bin:~/go/bin" >> ~/.bash_profile
@@ -47,28 +47,25 @@ story-geth version
 
 ### Download Story binary
 ```
-cd $HOME
-wget https://story-geth-binaries.s3.us-west-1.amazonaws.com/story-public/story-linux-amd64-0.11.0-aac4bfe.tar.gz
-tar -xzvf story-linux-amd64-0.11.0-aac4bfe.tar.gz
-[ ! -d "$HOME/go/bin" ] && mkdir -p $HOME/go/bin
-if ! grep -q "$HOME/go/bin" $HOME/.bash_profile; then
-  echo "export PATH=$PATH:/usr/local/go/bin:~/go/bin" >> ~/.bash_profile
-fi
-sudo cp $HOME/story-linux-amd64-0.11.0-aac4bfe/story $HOME/go/bin
+cd
+git clone https://github.com/piplabs/story && cd story
+git checkout v0.13.0
+go build -o story ./client
+mv $HOME/story/story $HOME/go/bin/
 source $HOME/.bash_profile
 story version
 ```
 
 ### Create Geth Servie File
 ```
-sudo tee /etc/systemd/system/story-geth.service > /dev/null <<EOF
+tee /etc/systemd/system/story-geth.service > /dev/null <<EOF
 [Unit]
-Description=Story Geth daemon
-After=network-online.target
+Description=Story Geth Client
+After=network.target
 
 [Service]
 User=$USER
-ExecStart=$HOME/go/bin/geth --iliad --syncmode full --http --http.api eth,net,web3,engine --http.vhosts '*' --http.addr 0.0.0.0 --http.port ${STORY_PORT}545 --authrpc.port ${STORY_PORT}551 --ws --ws.api eth,web3,net,txpool --ws.addr 0.0.0.0 --ws.port ${STORY_PORT}546
+ExecStart=$HOME/go/bin/story-geth --odyssey --syncmode full --http --http.api eth,net,web3,engine --http.vhosts '*' --http.addr 127.0.0.1 --http.port 8545 --ws --ws.api eth,web3,net,txpool --ws.addr 127.0.0.1 --ws.port 8546
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
@@ -80,19 +77,61 @@ EOF
 
 ### Create Story Service File
 ```
-sudo tee /etc/systemd/system/story.service > /dev/null <<EOF
+tee /etc/systemd/system/story.service > /dev/null <<EOF
 [Unit]
-Description=Story Service
+Description=Story Consensus Client
 After=network.target
 
 [Service]
 User=$USER
 WorkingDirectory=$HOME/.story/story
-ExecStart=$(which story) run
-
+ExecStart=$HOME/go/bin/story run
 Restart=on-failure
-RestartSec=5
+RestartSec=3
 LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+## Cosmovisor Setup
+
+### Install Cosmovisor
+```
+go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@latest
+echo "export DAEMON_NAME="story"" >> $HOME/.bash_profile
+echo "export DAEMON_HOME="$HOME/.story/story"" >> $HOME/.bash_profile
+source $HOME/.bash_profile
+cosmovisor init $(which story)
+```
+
+### Create a directory and download the current version
+```
+mkdir -p $HOME/.story/story/cosmovisor/upgrades/v0.13.0/bin
+wget -O $HOME/.story/story/cosmovisor/upgrades/v0.13.0/bin/story https://github.com/piplabs/story/releases/download/v0.13.0/story-linux-amd64
+chmod +x $HOME/.story/story/cosmovisor/upgrades/v0.13.0/bin/story
+```
+
+### Update service file
+```
+sudo tee /etc/systemd/system/story.service > /dev/null << EOF
+[Unit]
+Description=story node service
+After=network-online.target
+
+[Service]
+User=$USER
+Environment="DAEMON_NAME=story"
+Environment="DAEMON_HOME=$HOME/.story/story"
+Environment="DAEMON_RESTART_AFTER_UPGRADE=true"
+Environment="UNSAFE_SKIP_BACKUP=true"
+Environment="DAEMON_DATA_BACKUP_DIR=$HOME/.story/story/data"
+ExecStart=$(which cosmovisor) run run
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65535
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -137,9 +176,8 @@ cat $HOME/.story/story/config/private_key.txt
 
 #### Create Your validator
 ```
-story validator create --stake 1000000000000000000 --private-key $(cat $HOME/.story/story/config/private_key.txt | grep "PRIVATE_KEY" | awk -F'=' '{print $2}')
+story validator create --stake 1000000000000000000 --private-key "YOURPRIVATKEY" --moniker YOURMONIKER --chain-id 1516
 ```
-
 
 ## Delete Node
 ```
